@@ -4,8 +4,6 @@ import javax.swing.*;
 import javax.swing.table.DefaultTableModel;
 import java.awt.*;
 import java.awt.event.*;
-import java.nio.file.Files;
-import java.nio.file.Paths;
 import java.sql.*;
 
 public class Principal extends JFrame {
@@ -13,73 +11,77 @@ public class Principal extends JFrame {
     private Connection con;
     private JTable tablaDatos;
     private JComboBox<String> comboTablas;
+    private DefaultTableModel modeloTabla;
 
     public Principal() {
-        setTitle("Gestor de Inventario - MySQL");
-        setSize(800, 500);
+        setTitle("Gestor de Inventario - MySQL (modo visual)");
+        setSize(950, 600);
         setDefaultCloseOperation(EXIT_ON_CLOSE);
         setLocationRelativeTo(null);
         setLayout(new BorderLayout());
 
         conectarBaseDeDatos();
 
-        JPanel panelBotones = new JPanel();
-        JButton btnCargarTablas = new JButton("Mostrar Tablas");
+        // --- Panel superior ---
+        JPanel panelSuperior = new JPanel(new FlowLayout());
+        comboTablas = new JComboBox<>();
+        JButton btnMostrarTablas = new JButton("Mostrar");
+        JButton btnTriggers = new JButton("Ver Triggers");
+        JButton btnProcedimientos = new JButton("Ver Procedimientos");
         JButton btnSalir = new JButton("Salir");
 
-        comboTablas = new JComboBox<>();
-        tablaDatos = new JTable();
+        panelSuperior.add(new JLabel("Tabla:"));
+        panelSuperior.add(comboTablas);
+        panelSuperior.add(btnMostrarTablas);
+        panelSuperior.add(btnTriggers);
+        panelSuperior.add(btnProcedimientos);
+        panelSuperior.add(btnSalir);
+        add(panelSuperior, BorderLayout.NORTH);
 
-        JScrollPane scroll = new JScrollPane(tablaDatos);
+        // --- Tabla central ---
+        modeloTabla = new DefaultTableModel();
+        tablaDatos = new JTable(modeloTabla);
+        tablaDatos.setFillsViewportHeight(true);
+        tablaDatos.setAutoResizeMode(JTable.AUTO_RESIZE_ALL_COLUMNS);
+        tablaDatos.setCellSelectionEnabled(true);
+        add(new JScrollPane(tablaDatos), BorderLayout.CENTER);
 
-        panelBotones.add(new JLabel("Selecciona una tabla:"));
-        panelBotones.add(comboTablas);
-        panelBotones.add(btnCargarTablas);
-        panelBotones.add(btnSalir);
+        // --- Panel inferior ---
+        JPanel panelInferior = new JPanel(new FlowLayout());
+        JButton btnAgregarFila = new JButton("+ Agregar fila");
+        JButton btnInsertar = new JButton("Insertar");
+        JButton btnActualizar = new JButton("Actualizar");
+        JButton btnEliminar = new JButton("Eliminar");
+        panelInferior.add(btnAgregarFila);
+        panelInferior.add(btnInsertar);
+        panelInferior.add(btnActualizar);
+        panelInferior.add(btnEliminar);
+        add(panelInferior, BorderLayout.SOUTH);
 
-        add(panelBotones, BorderLayout.NORTH);
-        add(scroll, BorderLayout.CENTER);
-
-        // Cargar nombres de tablas al combo
+        // --- Acciones ---
         cargarNombresDeTablas();
-
-        // Acción botón Mostrar
-        btnCargarTablas.addActionListener(e -> mostrarTablaSeleccionada());
-
-        // Acción botón Salir
+        btnMostrarTablas.addActionListener(e -> mostrarTablaSeleccionada());
+        btnTriggers.addActionListener(e -> mostrarTriggers());
+        btnProcedimientos.addActionListener(e -> mostrarProcedimientos());
         btnSalir.addActionListener(e -> System.exit(0));
+
+        btnAgregarFila.addActionListener(e -> agregarFilaVacia());
+        btnInsertar.addActionListener(e -> insertarFilaSeleccionada());
+        btnActualizar.addActionListener(e -> actualizarFilaSeleccionada());
+        btnEliminar.addActionListener(e -> eliminarFilaSeleccionada());
     }
 
     private void conectarBaseDeDatos() {
         try {
             Class.forName("com.mysql.cj.jdbc.Driver");
             con = DriverManager.getConnection(
-                    "jdbc:mysql://localhost:3306/?useSSL=false&serverTimezone=UTC",
+                    "jdbc:mysql://localhost:3306/inventario_db?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC",
                     "root",
                     "gate"
             );
-
-            Statement stmt = con.createStatement();
-            stmt.execute("CREATE DATABASE IF NOT EXISTS inventario_db;");
-            stmt.execute("USE inventario_db;");
-            System.out.println("✅ Base de datos inventario_db lista.");
-
-            // Leer archivo SQL y crear tablas si no existen
-            String scriptCreacion = new String(Files.readAllBytes(
-                    Paths.get("D:/JAVA/DIRECTORIO/SQL/src/sql/Creacion e Insersion inventario_db.txt")));
-            String[] comandos = scriptCreacion.split(";");
-            for (String sql : comandos) {
-                sql = sql.trim();
-                if (sql.length() > 5) {
-                    try {
-                        stmt.execute(sql + ";");
-                    } catch (Exception ignored) {}
-                }
-            }
-
+            System.out.println("✅ Conectado a MySQL inventario_db.");
         } catch (Exception e) {
-            JOptionPane.showMessageDialog(this, "Error al conectar a MySQL:\n" + e,
-                    "Error", JOptionPane.ERROR_MESSAGE);
+            JOptionPane.showMessageDialog(this, "Error de conexión:\n" + e);
         }
     }
 
@@ -88,56 +90,193 @@ public class Principal extends JFrame {
             comboTablas.removeAllItems();
             Statement stmt = con.createStatement();
             ResultSet rs = stmt.executeQuery("SHOW TABLES;");
-            while (rs.next()) {
-                comboTablas.addItem(rs.getString(1));
-            }
+            while (rs.next()) comboTablas.addItem(rs.getString(1));
         } catch (Exception e) {
-            JOptionPane.showMessageDialog(this, "Error al obtener tablas:\n" + e,
-                    "Error", JOptionPane.ERROR_MESSAGE);
+            JOptionPane.showMessageDialog(this, "Error al cargar tablas:\n" + e);
         }
     }
 
     private void mostrarTablaSeleccionada() {
-        String nombreTabla = (String) comboTablas.getSelectedItem();
-        if (nombreTabla == null) {
-            JOptionPane.showMessageDialog(this, "No hay tablas disponibles.");
+        String tabla = (String) comboTablas.getSelectedItem();
+        if (tabla == null) return;
+        try {
+            Statement stmt = con.createStatement();
+            ResultSet rs = stmt.executeQuery("SELECT * FROM " + tabla);
+            ResultSetMetaData meta = rs.getMetaData();
+
+            modeloTabla = new DefaultTableModel();
+            int columnas = meta.getColumnCount();
+            for (int i = 1; i <= columnas; i++) modeloTabla.addColumn(meta.getColumnName(i));
+
+            while (rs.next()) {
+                Object[] fila = new Object[columnas];
+                for (int i = 1; i <= columnas; i++) fila[i - 1] = rs.getObject(i);
+                modeloTabla.addRow(fila);
+            }
+
+            tablaDatos.setModel(modeloTabla);
+        } catch (Exception e) {
+            JOptionPane.showMessageDialog(this, "Error al mostrar:\n" + e);
+        }
+    }
+
+    // --- Agregar una fila vacía al final ---
+    private void agregarFilaVacia() {
+        if (modeloTabla == null || modeloTabla.getColumnCount() == 0) {
+            JOptionPane.showMessageDialog(this, "Primero selecciona una tabla para editar.");
+            return;
+        }
+        Object[] vacio = new Object[modeloTabla.getColumnCount()];
+        modeloTabla.addRow(vacio);
+        tablaDatos.scrollRectToVisible(tablaDatos.getCellRect(modeloTabla.getRowCount() - 1, 0, true));
+    }
+
+    // --- Insertar una nueva fila en la base de datos ---
+    private void insertarFilaSeleccionada() {
+        int fila = tablaDatos.getSelectedRow();
+        if (fila == -1) {
+            JOptionPane.showMessageDialog(this, "Selecciona la fila que deseas insertar.");
             return;
         }
 
+        String tabla = (String) comboTablas.getSelectedItem();
         try {
-            Statement stmt = con.createStatement();
-            ResultSet rs = stmt.executeQuery("SELECT * FROM " + nombreTabla);
-            ResultSetMetaData meta = rs.getMetaData();
-
-            DefaultTableModel modelo = new DefaultTableModel();
+            ResultSetMetaData meta = con.createStatement()
+                    .executeQuery("SELECT * FROM " + tabla + " LIMIT 1").getMetaData();
             int columnas = meta.getColumnCount();
 
-            // Nombres de columnas
+            StringBuilder campos = new StringBuilder();
+            StringBuilder valores = new StringBuilder();
+
             for (int i = 1; i <= columnas; i++) {
-                modelo.addColumn(meta.getColumnName(i));
-            }
-
-            // Datos de filas
-            while (rs.next()) {
-                Object[] fila = new Object[columnas];
-                for (int i = 1; i <= columnas; i++) {
-                    fila[i - 1] = rs.getObject(i);
+                Object valor = modeloTabla.getValueAt(fila, i - 1);
+                if (valor != null && !valor.toString().trim().isEmpty()) {
+                    campos.append(meta.getColumnName(i)).append(",");
+                    valores.append("'").append(valor).append("',");
                 }
-                modelo.addRow(fila);
             }
 
-            tablaDatos.setModel(modelo);
+            if (campos.length() == 0) {
+                JOptionPane.showMessageDialog(this, "No hay datos para insertar.");
+                return;
+            }
+
+            campos.deleteCharAt(campos.length() - 1);
+            valores.deleteCharAt(valores.length() - 1);
+
+            String sql = "INSERT INTO " + tabla + " (" + campos + ") VALUES (" + valores + ")";
+            Statement stmt = con.createStatement();
+            stmt.executeUpdate(sql);
+
+            JOptionPane.showMessageDialog(this, "✅ Fila insertada correctamente.");
+            mostrarTablaSeleccionada();
 
         } catch (Exception e) {
-            JOptionPane.showMessageDialog(this, "Error al mostrar tabla:\n" + e,
-                    "Error", JOptionPane.ERROR_MESSAGE);
+            JOptionPane.showMessageDialog(this, "❌ Error al insertar:\n" + e);
+        }
+    }
+
+    // --- Actualizar la fila seleccionada ---
+    private void actualizarFilaSeleccionada() {
+        int fila = tablaDatos.getSelectedRow();
+        if (fila == -1) {
+            JOptionPane.showMessageDialog(this, "Selecciona una fila para actualizar.");
+            return;
+        }
+
+        String tabla = (String) comboTablas.getSelectedItem();
+        try {
+            ResultSet rs = con.createStatement().executeQuery("SELECT * FROM " + tabla + " LIMIT 1");
+            ResultSetMetaData meta = rs.getMetaData();
+            String columnaClave = meta.getColumnName(1);
+            Object valorClave = modeloTabla.getValueAt(fila, 0); // Se asume primera columna como clave
+
+            StringBuilder setClause = new StringBuilder();
+            for (int i = 2; i <= meta.getColumnCount(); i++) {
+                Object valor = modeloTabla.getValueAt(fila, i - 1);
+                setClause.append(meta.getColumnName(i)).append("='").append(valor).append("',");
+            }
+            setClause.deleteCharAt(setClause.length() - 1);
+
+            String sql = "UPDATE " + tabla + " SET " + setClause + " WHERE " + columnaClave + "='" + valorClave + "'";
+            Statement stmt = con.createStatement();
+            int filas = stmt.executeUpdate(sql);
+
+            if (filas > 0)
+                JOptionPane.showMessageDialog(this, "✅ Fila actualizada correctamente.");
+            else
+                JOptionPane.showMessageDialog(this, "⚠️ No se encontró el registro para actualizar.");
+
+            mostrarTablaSeleccionada();
+        } catch (Exception e) {
+            JOptionPane.showMessageDialog(this, "❌ Error al actualizar:\n" + e);
+        }
+    }
+
+    // --- Eliminar la fila seleccionada ---
+    private void eliminarFilaSeleccionada() {
+        int fila = tablaDatos.getSelectedRow();
+        if (fila == -1) {
+            JOptionPane.showMessageDialog(this, "Selecciona una fila para eliminar.");
+            return;
+        }
+
+        int confirm = JOptionPane.showConfirmDialog(this, "¿Seguro que deseas eliminar esta fila?", "Confirmar", JOptionPane.YES_NO_OPTION);
+        if (confirm != JOptionPane.YES_OPTION) return;
+
+        String tabla = (String) comboTablas.getSelectedItem();
+        try {
+            ResultSet rs = con.createStatement().executeQuery("SELECT * FROM " + tabla + " LIMIT 1");
+            ResultSetMetaData meta = rs.getMetaData();
+            String columnaClave = meta.getColumnName(1);
+            Object valorClave = modeloTabla.getValueAt(fila, 0);
+
+            String sql = "DELETE FROM " + tabla + " WHERE " + columnaClave + "='" + valorClave + "'";
+            Statement stmt = con.createStatement();
+            int filas = stmt.executeUpdate(sql);
+
+            if (filas > 0) {
+                JOptionPane.showMessageDialog(this, "✅ Fila eliminada correctamente.");
+                mostrarTablaSeleccionada();
+            } else {
+                JOptionPane.showMessageDialog(this, "⚠️ No se encontró el registro a eliminar.");
+            }
+
+        } catch (Exception e) {
+            JOptionPane.showMessageDialog(this, "❌ Error al eliminar:\n" + e);
+        }
+    }
+
+    // --- Mostrar triggers y procedimientos ---
+    private void mostrarTriggers() {
+        try {
+            Statement stmt = con.createStatement();
+            ResultSet rs = stmt.executeQuery("SHOW TRIGGERS FROM inventario_db;");
+            DefaultTableModel modelo = new DefaultTableModel(new String[]{"Trigger", "Evento", "Tabla"}, 0);
+            while (rs.next()) {
+                modelo.addRow(new Object[]{rs.getString("Trigger"), rs.getString("Event"), rs.getString("Table")});
+            }
+            tablaDatos.setModel(modelo);
+        } catch (Exception e) {
+            JOptionPane.showMessageDialog(this, "Error al mostrar triggers:\n" + e);
+        }
+    }
+
+    private void mostrarProcedimientos() {
+        try {
+            Statement stmt = con.createStatement();
+            ResultSet rs = stmt.executeQuery("SHOW PROCEDURE STATUS WHERE Db = 'inventario_db';");
+            DefaultTableModel modelo = new DefaultTableModel(new String[]{"Nombre", "Tipo", "Creado"}, 0);
+            while (rs.next()) {
+                modelo.addRow(new Object[]{rs.getString("Name"), rs.getString("Type"), rs.getString("Created")});
+            }
+            tablaDatos.setModel(modelo);
+        } catch (Exception e) {
+            JOptionPane.showMessageDialog(this, "Error al mostrar procedimientos:\n" + e);
         }
     }
 
     public static void main(String[] args) {
-        SwingUtilities.invokeLater(() -> {
-            Principal ventana = new Principal();
-            ventana.setVisible(true);
-        });
+        SwingUtilities.invokeLater(() -> new Principal().setVisible(true));
     }
 }
